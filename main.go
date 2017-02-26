@@ -1,30 +1,81 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 
+	mgo "gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
+
 	"github.com/graphql-go/graphql"
+	_ "github.com/lib/pq"
 )
 
-type Input struct {
-	Key int `json:"key"`
+// User .
+type User struct {
+	Login  string `json:"login"`
+	Admin  string `json:"admin"`
+	Active string `json:"active"`
 }
 
-var inputType = graphql.NewObject(graphql.ObjectConfig{
-	Name: "Input",
+type UserProfile struct {
+	Permissions []string `json:"permissions"`
+}
+
+type userDetails struct {
+	username string
+	admin    bool
+	active   bool
+}
+
+var userType = graphql.NewObject(graphql.ObjectConfig{
+	Name: "User",
 	Fields: graphql.Fields{
-		"key": &graphql.Field{
+		"login": &graphql.Field{
 			Type: graphql.String,
+		},
+		"admin": &graphql.Field{
+			Type: graphql.String,
+		},
+		"active": &graphql.Field{
+			Type: graphql.String,
+		},
+		"permissions": &graphql.Field{
+			Type: graphql.NewList(graphql.String),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				return 42, nil
+				var profile UserProfile
+				mdb.C("profiles").Find(bson.M{}).One(&profile)
+				return profile.Permissions, nil
 			},
 		},
 	},
 })
 
+var query string
+var mdb *mgo.Database
+
+func init() {
+	flag.StringVar(&query, "query", "{}", "query to ask server for data")
+}
+
 func main() {
+	flag.Parse()
+
+	db, err := sql.Open("postgres", "user=postgres dbname=graphql sslmode=disable")
+	if err != nil {
+		log.Fatalf("Failed to connect to the database: %v", err)
+	}
+
+	session, err := mgo.Dial("localhost")
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+
+	mdb = session.DB("graphql-example")
+
 	fields := graphql.Fields{
 		"hello": &graphql.Field{
 			Type: graphql.String,
@@ -33,15 +84,22 @@ func main() {
 				return "world", nil
 			},
 		},
-		"answer": &graphql.Field{
-			Type: inputType,
-			// Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			// 	key := 42 * p.Args["mul"].(int)
-			// 	return Input{Key: key}, nil
-			// },
-			// Args: graphql.FieldConfigArgument{
-			// 	"mul": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)},
-			// },
+		"user": &graphql.Field{
+			Type: userType,
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				rows, qerr := db.Query("SELECT * from users")
+				if qerr != nil {
+					log.Fatalf("Failed to read from the database: %v", err)
+				}
+				var u User
+				rows.Next()
+				err = rows.Scan(&u.Login, &u.Admin, &u.Active)
+				if err != nil {
+					log.Fatalf("Failed to load user data: %v", err)
+				}
+
+				return u, nil
+			},
 		},
 	}
 
@@ -52,18 +110,12 @@ func main() {
 		log.Fatalf("error: %v\n", err)
 	}
 
-	// var query string
-	// fmt.Scanf("%s", &query)
-	// query := "{answer(mul: 5){key}}"
-	query := "{hello}"
-	// query := "{answer(id: \"aaa\")}"
-
 	params := graphql.Params{Schema: schema, RequestString: query}
 	r := graphql.Do(params)
 	if r.HasErrors() {
 		log.Fatalf("Failed due to errors: %v\n", r.Errors)
 	}
 
-	rJSON, err := json.Marshal(r)
+	rJSON, _ := json.Marshal(r)
 	log.Printf("Found: %s", rJSON)
 }
