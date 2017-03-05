@@ -86,16 +86,25 @@ func main() {
 		},
 		"user": &graphql.Field{
 			Type: userType,
+			Args: graphql.FieldConfigArgument{
+				"login": &graphql.ArgumentConfig{
+					Type: graphql.NewNonNull(graphql.String),
+				},
+			},
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-				rows, qerr := db.Query("SELECT * from users")
+				login := p.Args["login"].(string)
+
+				rows, qerr := db.Query("SELECT * from users WHERE username = $1", login)
 				if qerr != nil {
 					log.Fatalf("Failed to read from the database: %v", err)
 				}
 				var u User
-				rows.Next()
-				err = rows.Scan(&u.Login, &u.Admin, &u.Active)
-				if err != nil {
-					log.Fatalf("Failed to load user data: %v", err)
+				exist := rows.Next()
+				if exist {
+					err = rows.Scan(&u.Login, &u.Admin, &u.Active)
+					if err != nil {
+						log.Fatalf("Failed to load user data: %v", err)
+					}
 				}
 
 				return u, nil
@@ -104,7 +113,10 @@ func main() {
 	}
 
 	rootQuery := graphql.ObjectConfig{Name: "RootQuery", Fields: fields}
-	schemaConfig := graphql.SchemaConfig{Query: graphql.NewObject(rootQuery)}
+
+	schemaConfig := graphql.SchemaConfig{
+		Query: graphql.NewObject(rootQuery),
+	}
 	schema, err := graphql.NewSchema(schemaConfig)
 	if err != nil {
 		log.Fatalf("error: %v\n", err)
