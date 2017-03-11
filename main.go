@@ -47,8 +47,8 @@ var userType = graphql.NewObject(graphql.ObjectConfig{
 			Type: graphql.NewList(graphql.String),
 			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 				var profile UserProfile
-				mdb.C("profiles").Find(bson.M{}).One(&profile)
-				return profile.Permissions, nil
+				err := mdb.C("profiles").Find(bson.M{}).One(&profile)
+				return profile.Permissions, err
 			},
 		},
 	},
@@ -112,10 +112,38 @@ func main() {
 		},
 	}
 
+	mutations := graphql.Fields{
+		"addPermission": &graphql.Field{
+			Type: graphql.Boolean,
+			Args: graphql.FieldConfigArgument{
+				"login": &graphql.ArgumentConfig{
+					Type: graphql.NewNonNull(graphql.String),
+				},
+				"permission": &graphql.ArgumentConfig{
+					Type: graphql.NewNonNull(graphql.String),
+				},
+			},
+			Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+				login := p.Args["login"].(string)
+				permission := p.Args["permission"].(string)
+
+				err := mdb.C("profiles").Update(bson.M{"_id": login}, bson.M{
+					"$addToSet": bson.M{
+						"permissions": permission,
+					},
+				})
+
+				return err == nil, err
+			},
+		},
+	}
+
 	rootQuery := graphql.ObjectConfig{Name: "RootQuery", Fields: fields}
+	rootMutation := graphql.ObjectConfig{Name: "RootMutation", Fields: mutations}
 
 	schemaConfig := graphql.SchemaConfig{
-		Query: graphql.NewObject(rootQuery),
+		Query:    graphql.NewObject(rootQuery),
+		Mutation: graphql.NewObject(rootMutation),
 	}
 	schema, err := graphql.NewSchema(schemaConfig)
 	if err != nil {
